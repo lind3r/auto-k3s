@@ -33,7 +33,8 @@ Simple script that attempts to install a k3s cluster together with kubernetes-da
   - libguestfs-tools: `apt update && apt install -y libguestfs-tools`
 
 ## Procedure
-1. Place `deploy` and `vars.conf` in an empty folder
+1. Clone this repository `git clone https://github.com/lind3r/auto-k3s.git`  
+   Or just copy `deploy` and `vars.conf` into an empty directory
 2. Edit variables in `vars.conf`
 3. Run with `./deploy`  
    The script will output more instructions once it finishes
