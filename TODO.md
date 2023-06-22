@@ -1,2 +1,3 @@
 - Add checks, everywhere, maybe even restructure for `set -e`
+- `root` user might not be needed on the Proxmox host
 - Should probably lock Ansible k3s repo to a known working commit and not just pull latest
