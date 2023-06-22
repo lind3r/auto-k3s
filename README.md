@@ -40,8 +40,11 @@ k3s Ansible playbook: https://github.com/k3s-io/k3s-ansible
 3. Run with `./deploy`  
    The script will output more instructions once it finishes
 
+## Notes
+
 - The script can be used to add and remove nodes by simply editing `vars.conf` and running it again.  
   Cluster downtime when doing this is expected.
 - The script overwrites Terraform and Ansible configuration each run based off `vars.conf`  
-  This means that any template changes outside `vars.conf` must be done in `deploy`  
+  This means that any configuration changes outside `vars.conf` must be done in `deploy`  
   Or just ditch the script entierly and configure Terraform and Ansible manually
+- The Terraform user gains a lot of premissions in your Proxmox environment.
