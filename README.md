@@ -1,5 +1,5 @@
 ## Description
-Simple script that attempts to install a k3s cluster together with kubernetes-dashboard in your Proxmox environment.
+Simple script that attempts to install a k3s cluster together with kubernetes-dashboard in your Proxmox environment.  
 k3s Ansible playbook: https://github.com/k3s-io/k3s-ansible
 
 ## FAQ
