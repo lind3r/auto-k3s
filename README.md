@@ -2,15 +2,15 @@
 Simple script that attempts to install a k3s cluster together with kubernetes-dashboard in your Proxmox environment.
 
 ## FAQ
-- How many different environments has this been tested on as of 2023-06-22?
+- How many different environments has this been tested on as of 2023-06-22?  
   1
-- Will this work for me right out off the box?
+- Will this work for me right out off the box?  
   Maybe, but probably not
-- How many edgecases have you covered?
+- How many edgecases have you covered?  
   Maybe 5 out of 30000
-- Should I use this to set up my production environment?
+- Should I use this to set up my production environment?  
   No
-- Will the script stop on errors?
+- Will the script stop on errors?  
   No, spam ctrl+c
 - What will the script do to the machine running it?
   - Generate SSH-keypair `~/.ssh/id_rsa_lab_kubernetes_<your_ansible_clustername>`
@@ -22,7 +22,7 @@ Simple script that attempts to install a k3s cluster together with kubernetes-da
 
 ## Prerequisites
 - Machine running script:
-  - Passwordless SSH access to Proxmox host with `root` user
+  - Passwordless SSH access to Proxmox host with `root` user  
     (this must work from your terminal: `ssh root@<proxmox-ip>`)
   - Terraform: https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli
   - Ansible: https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html
@@ -40,6 +40,6 @@ Simple script that attempts to install a k3s cluster together with kubernetes-da
 
 - The script can be used to add and remove nodes by simply editing `vars.conf` and running it again.  
   Cluster downtime when doing this is expected.
-- The script overwrites Terraform and Ansible configuration each run based off `vars.conf`
+- The script overwrites Terraform and Ansible configuration each run based off `vars.conf`  
   This means that any template changes outside `vars.conf` must be done in `deploy`  
   Or just ditch the script entierly and configure Terraform and Ansible manually
