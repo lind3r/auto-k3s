@@ -35,7 +35,7 @@ Simple script that attempts to install a k3s cluster together with kubernetes-da
 ## Procedure
 1. Place `deploy` and `vars.conf` in an empty folder
 2. Edit variables in `vars.conf` (commented values are what worked for me)
-3. Run with `./deploy`
+3. Run with `./deploy`  
    The script will output more instructions once it finishes
 
 - The script can be used to add and remove nodes by simply editing `vars.conf` and running it again.  
