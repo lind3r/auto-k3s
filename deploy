@@ -1,0 +1,263 @@
+#!/bin/bash
+
+declare -a tools=("jq" "terraform" "ansible" "kubectl" "git")
+for tool in "${tools[@]}"; do
+  if ! command -v $tool &> /dev/null; then
+    echo "$tool not found, plz install"
+    exit 1
+  fi
+done
+
+greenecho() {
+  echo "$(tput setaf 2)${1}$(tput sgr0)"
+}
+
+source vars.conf
+
+greenecho "==== Poxmox stuff"
+greenecho "== Checking if Proxmox VM ID $template_vm_id exists..."
+if ! ssh root@$proxmox_host_ip -t qm config $template_vm_id &> /dev/null; then
+  greenecho "== Proxmox VM ID $template_vm_id does not exist, proceeding to create..."
+  ssh root@$proxmox_host_ip -t << TJENA
+  wget -q ${template_cloud_url}${template_cloud_image}
+  virt-customize -a $template_cloud_image --install qemu-guest-agent
+  qemu-img resize $template_cloud_image $template_disk_size
+  qm create $template_vm_id --name $template_vm_name --memory $template_mem --cores $template_cores \
+  --net0 $template_vm_network,bridge=$template_vm_network_bridge
+  qm importdisk $template_vm_id $template_cloud_image $proxmox_storage
+  qm set $template_vm_id --scsihw virtio-scsi-pci --scsi0 $proxmox_storage:vm-$template_vm_id-disk-0
+  qm set $template_vm_id --boot c --bootdisk scsi0
+  qm set $template_vm_id --ide2 $proxmox_storage:cloudinit
+  qm set $template_vm_id --serial0 socket --vga serial0
+  qm set $template_vm_id --agent enabled=1
+  qm template $template_vm_id
+  qm set $template_vm_id --scsi0 $proxmox_storage:base-$template_vm_id-disk-0,discard=$proxmox_storage_discard,ssd=$proxmox_storage_ssd
+  rm $template_cloud_image
+TJENA
+  greenecho "== Template installed"
+else
+  greenecho "== Proxmox VM ID $template_vm_id exists, skipping..."
+fi
+
+greenecho "== Setting up Terrform user in Proxmox"
+ssh root@$proxmox_host_ip -t << TJENA
+pveum role add TerraformProv -privs \
+  "Datastore.AllocateSpace Datastore.Audit Pool.Allocate \
+  Sys.Audit Sys.Console Sys.Modify VM.Allocate VM.Audit \
+  VM.Clone VM.Config.CDROM VM.Config.Cloudinit VM.Config.CPU \
+  VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network \
+  VM.Config.Options VM.Migrate VM.Monitor VM.PowerMgmt"
+pveum user add $terraform_proxmox_username --password $terraform_proxmox_password
+pveum aclmod / -user $terraform_proxmox_username -role TerraformProv
+TJENA
+greenecho
+
+greenecho "==== Terraform stuff"
+greenecho "== Generating SSH keypair"
+localhost_ssh_key="$HOME/.ssh/id_rsa_lab_kubernetes_$ansible_clustername"
+mkdir -p $HOME/.ssh
+if [ ! -f "$localhost_ssh_key" ]; then
+  ssh-keygen -t rsa -b 4096 -f $localhost_ssh_key -N ""
+else
+  greenecho "== $localhost_ssh_key already exists, reusing"
+fi
+localhost_ssh_pubkey=$(cat "$localhost_ssh_key.pub")
+greenecho "== Starting ssh-agent and adding $localhost_ssh_key to it"
+eval "$(ssh-agent -s)"
+ssh-add "$localhost_ssh_key"
+
+greenecho "== Setting up local Terraform dir and configuration files"
+mkdir -p terraform ; cd terraform
+cat << TJENA > "main.tf"
+terraform {
+  required_providers {
+    proxmox = {
+      source  = "telmate/proxmox"
+      version = "2.9.14"
+    }
+  }
+}
+
+provider "proxmox" {
+  pm_api_url = "http://$proxmox_host_ip:8006/api2/json"
+  pm_user = "$terraform_proxmox_username"
+  pm_password = "$terraform_proxmox_password"
+  pm_tls_insecure = true
+}
+
+resource "proxmox_vm_qemu" "k3s-master" {
+  count = $terraform_master_amount
+  name = "k3s-master-\${count.index + 1}"
+  vmid = "$terraform_master_startid\${count.index + 1}"
+  target_node = var.proxmox_host
+  clone = var.template_name
+  cores = $terraform_master_cores
+  sockets = 1
+  cpu = "host"
+  memory = $terraform_master_mem
+  scsihw = "virtio-scsi-pci"
+
+  network {
+    model = "virtio"
+    bridge = "vmbr0"
+  }
+
+  ipconfig0 = "ip=$terraform_master_startip\${count.index + 1}/24,gw=$terraform_gateway"
+  sshkeys = "$localhost_ssh_pubkey"
+
+  lifecycle {
+    ignore_changes = [
+      qemu_os,
+      disk,
+    ]
+  }
+}
+output "master_ips" {
+  value = [for vm in proxmox_vm_qemu.k3s-master : vm.ipconfig0]
+  description = "IP addresses of the k3s masters"
+}
+
+resource "proxmox_vm_qemu" "k3s-node" {
+  count = $terraform_node_amount
+  name = "k3s-node-\${count.index + 1}"
+  vmid = "$terraform_node_startid\${count.index + 1}"
+  target_node = var.proxmox_host
+  clone = var.template_name
+  cores = $terraform_node_cores
+  sockets = 1
+  cpu = "host"
+  memory = $terraform_node_mem
+  scsihw = "virtio-scsi-pci"
+
+  network {
+    model = "virtio"
+    bridge = "vmbr0"
+  }
+
+  ipconfig0 = "ip=$terraform_node_startip\${count.index + 1}/24,gw=$terraform_gateway"
+  sshkeys = "$localhost_ssh_pubkey"
+
+  lifecycle {
+    ignore_changes = [
+      qemu_os,
+      disk,
+    ]
+  }
+}
+output "node_ips" {
+  value = [for vm in proxmox_vm_qemu.k3s-node : vm.ipconfig0]
+  description = "IP addresses of the k3s nodes"
+}
+TJENA
+
+cat << TJENA > "vars.tf"
+variable "ssh_key" {
+    default = "$terraform_ssh_pubkey"
+}
+variable "proxmox_host" {
+    default = "$proxmox_host_name"
+}
+variable "template_name" {
+    default = "$template_vm_name"
+}
+TJENA
+
+greenecho "== Applying Terraform configuration"
+terraform init && terraform apply -auto-approve
+master_ips=$(terraform output -json master_ips | jq -r '.[]' | sed -e 's/^ip=//' -e 's/\/.*$//')
+first_master=$(echo "$master_ips" | head -n 1)
+node_ips=$(terraform output -json node_ips | jq -r '.[]' | sed -e 's/^ip=//' -e 's/\/.*$//')
+all_ips="$master_ips $node_ips"
+cd ..
+greenecho
+
+greenecho "==== Connectivity check"
+for ip in $all_ips; do
+  ssh-keygen -f ~/.ssh/known_hosts -R "$ip" &> /dev/null
+  printf "$(tput setaf 2)== Waiting for VM boot and cloud-init to complete:$(tput sgr0) $ip"
+  until ssh -q -o BatchMode=yes -o ConnectTimeout=5 $template_vm_username@$ip -t cloud-init status &> /dev/null; do
+    ssh-keyscan "$ip" >> ~/.ssh/known_hosts 2> /dev/null
+    printf "." ; sleep 1
+  done
+  printf " OK\n"
+done
+greenecho
+
+greenecho "==== Ansible stuff"
+greenecho "== Setting up local Ansible dir and configuration files"
+if [ -d "k3s-ansible" ]; then
+  cd k3s-ansible && git pull
+else
+  git clone https://github.com/k3s-io/k3s-ansible && cd k3s-ansible
+fi
+cp -r inventory/sample inventory/$ansible_clustername
+hosts_file="inventory/$ansible_clustername/hosts.ini"
+vars_file="inventory/$ansible_clustername/group_vars/all.yml"
+
+cat << TJENA > "$hosts_file"
+[master]
+$master_ips
+
+[node]
+$node_ips
+
+[k3s_cluster:children]
+master
+node
+TJENA
+
+cat << TJENA > "$vars_file"
+---
+k3s_version: $k3s_version
+ansible_user: $template_vm_username
+systemd_dir: /etc/systemd/system
+master_ip: "{{ hostvars[groups['master'][0]]['ansible_host'] | default(groups['master'][0]) }}"
+extra_server_args: ""
+extra_agent_args: ""
+TJENA
+
+greenecho "== Starting Ansible deploy"
+ansible-playbook site.yml -i "$hosts_file"
+cd .. ; mkdir -p ~/.kube
+greenecho
+
+greenecho "==== Kubernetes stuff"
+greenecho "== Downloading access file to ~/.kube/config"
+scp $template_vm_username@$first_master:~/.kube/config ~/.kube/config
+greenecho "== Installing Kubernetes dashboard"
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/$k3s_dashboard_version/aio/deploy/recommended.yaml
+greenecho
+greenecho "== Setting up local deploy dir and configuration files"
+mkdir -p manifests
+cat << TJENA > "manifests/dashboard-adminuser.yaml"
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-user
+  namespace: kubernetes-dashboard
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-user
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: admin-user
+  namespace: kubernetes-dashboard
+TJENA
+kubectl apply -f manifests/dashboard-adminuser.yaml
+kubectl -n kubernetes-dashboard create token admin-user > ~/.kube/web-token
+greenecho
+greenecho "==== Summary"
+kubectl get nodes
+greenecho
+echo "Run 'kubectl proxy' and browse to the Kubernetes dashboard with URL below"
+echo "http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/"
+echo "Log in with token found at ~/.kube/web-token"
+echo "'kubectl' CLI authentication is possible because of ~/.kube/config"
+greenecho "==== Done"
