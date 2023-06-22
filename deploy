@@ -8,14 +8,53 @@ for tool in "${tools[@]}"; do
   fi
 done
 
+force=0
+if [ "$1" == "-f" ]; then
+  force=1
+fi
+
 greenecho() {
   echo "$(tput setaf 2)${1}$(tput sgr0)"
+}
+redecho() {
+  echo "$(tput setaf 1)${1}$(tput sgr0)"
 }
 
 source vars.conf
 
-greenecho "==== Poxmox stuff"
-greenecho "== Checking if Proxmox VM ID $template_vm_id exists..."
+greenecho "==== Proxmox stuff"
+# Collect all ID's
+true_terraform_master_startid=$((terraform_master_startid * 10 + 1))
+true_terraform_node_startid=$((terraform_node_startid * 10 + 1))
+all_ids=()
+for ((count=0; count<$terraform_master_amount; count++)); do
+  id=$(($true_terraform_master_startid + count))
+  all_ids+=($id)
+done
+for (( count=0; count<$terraform_node_amount; count++ )); do
+  id=$(($true_terraform_node_startid + count))
+  all_ids+=($id)
+done
+all_ids+=($template_vm_id)
+existing_ids=()
+if [ $force -eq 0 ]; then
+  greenecho "== Checking existing Proxmox VM ID's..."
+  for id in "${all_ids[@]}"; do
+    printf "Checking ID $id ..."
+    if ssh root@$proxmox_host_ip -t qm config $id &> /dev/null; then
+      existing_ids+=($id)
+      printf "$(tput setaf 1) FOUND$(tput sgr0)\n"
+    else
+      printf "$(tput setaf 2) FREE$(tput sgr0)\n"
+    fi
+  done
+fi
+if [ ${#existing_ids[@]} -gt 0 ]; then
+  echo "$(tput setaf 1)== Following ID's already present in Proxmox: ${existing_ids[@]}$(tput sgr0)"
+  redecho "If you are modifying your current cluster or simply don't care about these machines, use the force flag '$0 -f'"
+  exit 1
+fi
+
 if ! ssh root@$proxmox_host_ip -t qm config $template_vm_id &> /dev/null; then
   greenecho "== Proxmox VM ID $template_vm_id does not exist, proceeding to create..."
   ssh root@$proxmox_host_ip -t << TJENA
@@ -36,8 +75,10 @@ if ! ssh root@$proxmox_host_ip -t qm config $template_vm_id &> /dev/null; then
 TJENA
   greenecho "== Template installed"
 else
-  greenecho "== Proxmox VM ID $template_vm_id exists, skipping..."
+  greenecho "== Proxmox VM ID $template_vm_id exists, assuming template, skipping..."
 fi
+
+greenecho "== Template installed"
 
 greenecho "== Setting up Terrform user in Proxmox"
 ssh root@$proxmox_host_ip -t << TJENA
