@@ -1,0 +1,2 @@
+- Add cheks, everywhere, maybe even restructure for `set -e`
+- Should probably lock Ansible k3s repo to a known working commit and not just pull latest
